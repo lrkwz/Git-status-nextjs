@@ -1,0 +1,7 @@
+{
+  "name": "Git Status Dashboard",
+  "description": "Visualizzatore in tempo reale delle informazioni Git: ultimo tag, branch corrente, stato dirty e hash dell'ultimo commit.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
