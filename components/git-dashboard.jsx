@@ -1,702 +1,457 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
-import { motion, AnimatePresence } from 'motion/react';
 import {
   GitBranch,
   Tag,
   GitCommit,
   AlertCircle,
   CheckCircle2,
-  RefreshCw,
   Copy,
   Check,
   Terminal,
   FolderGit2,
   Clock,
   User,
-  Plus,
-  Trash2,
   FileCode,
-  GitPullRequest,
+  ShieldCheck,
+  Cpu,
+  Layers,
+  UploadCloud,
 } from 'lucide-react';
 
-export default function GitDashboard() {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(false);
+const emptySubscribe = () => () => {};
+
+function useIsClient() {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false
+  );
+}
+
+export default function GitDashboard({ gitInfo }) {
   const [copiedKey, setCopiedKey] = useState(null);
-  const [actionLoading, setActionLoading] = useState(null);
-  const [feedback, setFeedback] = useState(null);
+  const [showRemoteHelp, setShowRemoteHelp] = useState(false);
+  const isClient = useIsClient();
 
-  // Form states per le azioni interattive
-  const [newTagName, setNewTagName] = useState('');
-  const [showTagForm, setShowTagForm] = useState(false);
-  const [newBranchName, setNewBranchName] = useState('');
-  const [showBranchForm, setShowBranchForm] = useState(false);
-  const [commitMessage, setCommitMessage] = useState('');
-  const [showCommitForm, setShowCommitForm] = useState(false);
+  const data = gitInfo || {
+    isGitRepo: false,
+    gitVersion: '',
+    currentBranch: 'main',
+    latestTag: null,
+    isDirty: false,
+    dirtyFilesCount: 0,
+    dirtyFiles: [],
+    latestCommit: null,
+    recentCommits: [],
+    stats: { totalCommits: 0, totalTags: 0, totalBranches: 0, allBranches: [], allTags: [] },
+    buildTime: '',
+    collectedAt: 'build-time',
+  };
 
-  const fetchGitInfo = useCallback(async (isSilent = false) => {
-    if (!isSilent) setRefreshing(true);
-    try {
-      const res = await fetch('/api/git', { cache: 'no-store' });
-      const json = await res.json();
-      if (res.ok) {
-        setData(json);
-      } else {
-        setFeedback({
-          type: 'error',
-          message: json.error || 'Errore nel recupero delle informazioni Git.',
-        });
-      }
-    } catch (err) {
-      setFeedback({
-        type: 'error',
-        message: `Impossibile comunicare con il server: ${err?.message || err}`,
-      });
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+  const handleCopy = async (text, key) => {
+    if (!text) return;
+    let copied = false;
 
-  useEffect(() => {
-    let ignore = false;
-    async function init() {
+    // 1. Prova con Clipboard API moderna
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
       try {
-        const res = await fetch('/api/git', { cache: 'no-store' });
-        const json = await res.json();
-        if (!ignore) {
-          if (res.ok) {
-            setData(json);
-          } else {
-            setFeedback({
-              type: 'error',
-              message: json.error || 'Errore nel recupero delle informazioni Git.',
-            });
-          }
-        }
-      } catch (err) {
-        if (!ignore) {
-          setFeedback({
-            type: 'error',
-            message: `Impossibile comunicare con il server: ${err?.message || err}`,
-          });
-        }
-      } finally {
-        if (!ignore) {
-          setLoading(false);
-        }
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      } catch {
+        // Fallback sotto
       }
     }
-    init();
-    return () => {
-      ignore = true;
-    };
-  }, []);
 
-  // Aggiornamento automatico periodico
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const interval = setInterval(() => {
-      fetchGitInfo(true);
-    }, 4000);
-    return () => clearInterval(interval);
-  }, [autoRefresh, fetchGitInfo]);
-
-  // Copia negli appunti
-  const handleCopy = (text, key) => {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => {
-      setCopiedKey((prev) => (prev === key ? null : prev));
-    }, 2000);
-  };
-
-  // Esecuzione azione Git (toggle dirty, clean, tag, commit, branch)
-  const handleAction = async (action, payload = {}) => {
-    setActionLoading(action);
-    setFeedback(null);
-    try {
-      const res = await fetch('/api/git', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, ...payload }),
-      });
-      const result = await res.json();
-      if (res.ok) {
-        setFeedback({ type: 'success', message: result.message });
-        if (result.gitInfo) {
-          setData(result.gitInfo);
-        } else {
-          await fetchGitInfo(true);
-        }
-        if (action === 'create-tag') {
-          setNewTagName('');
-          setShowTagForm(false);
-        }
-        if (action === 'switch-branch') {
-          setNewBranchName('');
-          setShowBranchForm(false);
-        }
-        if (action === 'create-commit') {
-          setCommitMessage('');
-          setShowCommitForm(false);
-        }
-      } else {
-        setFeedback({ type: 'error', message: result.message || 'Operazione fallita.' });
+    // 2. Fallback per iframe / contesti privi di permessi Clipboard API
+    if (!copied && typeof document !== 'undefined') {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        textArea.setAttribute('readonly', '');
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        copied = true;
+      } catch {
+        // Ignora se non permesso
       }
-    } catch (err) {
-      setFeedback({ type: 'error', message: `Errore di rete: ${err?.message || err}` });
-    } finally {
-      setActionLoading(null);
+    }
+
+    if (copied) {
+      setCopiedKey(key);
       setTimeout(() => {
-        setFeedback((prev) => (prev?.message ? null : prev));
-      }, 5000);
+        setCopiedKey((prev) => (prev === key ? null : prev));
+      }, 2000);
     }
   };
+
+  // Formattazione deterministica per prevenire Hydration Mismatch tra Server e Client
+  const formatTimestamp = (dateStr) => {
+    if (!dateStr) return '--:--';
+    const date = new Date(dateStr);
+    if (isNaN(date.getTime())) return dateStr;
+
+    // Durante SSR e prima del mounting usiamo formato ISO UTC deterministico
+    if (!isClient) {
+      return date.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+    }
+
+    // Dopo l'idratazione sul client possiamo usare la localizzazione del browser dell'utente
+    try {
+      return date.toLocaleString('it-IT', {
+        dateStyle: 'medium',
+        timeStyle: 'medium',
+      });
+    } catch {
+      return date.toISOString().replace('T', ' ').substring(0, 19);
+    }
+  };
+
+  const formattedBuildTime = formatTimestamp(data.buildTime);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
       {/* Top Bar Contract (3 zone standard) */}
       <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-4 sm:px-8 py-3.5">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-          {/* Zona 1: Nome brand singolo */}
+          {/* Zona 1: Brand wordmark singolo */}
           <div className="flex items-center gap-3 shrink-0">
             <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 shadow-sm">
               <FolderGit2 className="w-4 h-4" />
             </div>
-            <Link href="/" className="text-base font-bold tracking-tight text-white hover:text-cyan-300 transition-colors">
-              Git Inspector
+            <Link
+              href="/"
+              className="text-base font-bold tracking-tight text-white hover:text-cyan-300 transition-colors"
+            >
+              Git Build Inspector
             </Link>
           </div>
 
-          {/* Zona 2: Metadati puliti unboxed con separatori tipografici */}
+          {/* Zona 2: Metadati unboxed puliti con suppressHydrationWarning */}
           <nav className="hidden md:flex items-center gap-2 text-xs text-slate-400">
-            <span>Workspace</span>
+            <span>Catturato a Build Time</span>
             <span aria-hidden="true" className="text-slate-600">·</span>
-            <span>Versione {data?.gitVersion ? data.gitVersion.replace('git version ', 'v') : 'Git'}</span>
+            <span>Versione {data.gitVersion ? data.gitVersion.replace('git version ', 'v') : 'Git'}</span>
             <span aria-hidden="true" className="text-slate-600">·</span>
-            <span className="font-mono tabular-nums">
-              {data?.lastChecked ? new Date(data.lastChecked).toLocaleTimeString('it-IT') : '--:--:--'}
+            <span suppressHydrationWarning className="font-mono tabular-nums">
+              {formattedBuildTime}
             </span>
           </nav>
 
-          {/* Zona 3: Controlli e azioni primarie */}
+          {/* Zona 3: Indicatore di architettura Build-Time e Push Helper */}
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setAutoRefresh(!autoRefresh)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border flex items-center gap-1.5 whitespace-nowrap ${
-                autoRefresh
-                  ? 'bg-cyan-950/60 border-cyan-500/40 text-cyan-300'
-                  : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
-              }`}
-              title="Attiva aggiornamento automatico ogni 4 secondi"
+              onClick={() => setShowRemoteHelp(!showRemoteHelp)}
+              className="px-3 py-1.5 text-xs font-medium text-cyan-300 bg-cyan-950/50 hover:bg-cyan-900/50 border border-cyan-500/30 rounded-lg flex items-center gap-1.5 transition-colors"
             >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  autoRefresh ? 'bg-cyan-400 animate-pulse' : 'bg-slate-600'
-                }`}
-              />
-              Auto 4s
+              <UploadCloud className="w-3.5 h-3.5 text-cyan-400" />
+              <span>GitHub Remote</span>
             </button>
 
-            <button
-              onClick={() => fetchGitInfo()}
-              disabled={refreshing}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50 whitespace-nowrap"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin text-cyan-400' : ''}`} />
-              Aggiorna
-            </button>
+            <div className="hidden sm:flex px-3 py-1.5 text-xs font-medium text-emerald-300 bg-emerald-950/50 border border-emerald-500/30 rounded-lg items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Zero Runtime Deps</span>
+            </div>
           </div>
         </div>
       </header>
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-8 space-y-8">
-        {/* Banner Notifiche Feedback */}
-        <AnimatePresence>
-          {feedback && (
-            <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className={`p-3.5 rounded-xl border text-xs sm:text-sm flex items-center justify-between gap-3 ${
-                feedback.type === 'success'
-                  ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
-                  : 'bg-rose-950/40 border-rose-500/30 text-rose-200'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                {feedback.type === 'success' ? (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                )}
-                <span>{feedback.message}</span>
-              </div>
+        {/* Banner Informativo Build-Time */}
+        <div className="p-4 rounded-xl border border-cyan-500/30 bg-cyan-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs sm:text-sm">
+          <div className="flex items-center gap-2.5 text-cyan-200">
+            <Cpu className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span>
+              Tutte le informazioni sono state compilate staticamente durante la fase di <strong className="font-semibold text-white">build time</strong>. Nessun comando shell o dipendenza da Git viene eseguito a runtime.
+            </span>
+          </div>
+          <span
+            suppressHydrationWarning
+            className="font-mono text-xs text-cyan-400/80 shrink-0 bg-slate-900/80 px-2.5 py-1 rounded border border-cyan-500/20"
+          >
+            Snapshot: {formattedBuildTime}
+          </span>
+        </div>
+
+        {/* GitHub Push Helper Modal / Box se attivato */}
+        {showRemoteHelp && (
+          <div className="p-5 rounded-xl border border-slate-700 bg-slate-900/90 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <UploadCloud className="w-4 h-4 text-cyan-400" />
+                Configurazione Push su GitHub
+              </h3>
               <button
-                onClick={() => setFeedback(null)}
-                className="text-xs opacity-75 hover:opacity-100 underline shrink-0"
+                onClick={() => setShowRemoteHelp(false)}
+                className="text-xs text-slate-400 hover:text-slate-200"
               >
                 Chiudi
               </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
+            </div>
+            <p className="text-xs text-slate-300">
+              Per inviare i commit al tuo repository remoto su GitHub, esegui questi comandi nel terminale:
+            </p>
+            <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-xs font-mono text-cyan-300 space-y-1.5 select-all">
+              <p>git remote add origin https://github.com/&lt;IL_TUO_USERNAME&gt;/&lt;IL_TUO_REPO&gt;.git</p>
+              <p>git branch -M main</p>
+              <p>git push -u origin main</p>
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() =>
+                  handleCopy(
+                    'git remote add origin https://github.com/<USERNAME>/<REPO>.git\ngit branch -M main\ngit push -u origin main',
+                    'git-push-cmds'
+                  )
+                }
+                className="px-3 py-1.5 text-xs font-medium text-white bg-slate-800 hover:bg-slate-700 rounded-md border border-slate-700 flex items-center gap-1.5"
+              >
+                {copiedKey === 'git-push-cmds' ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-400" /> Copiato!
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" /> Copia comandi
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
 
-        {/* Intestazione Sezione */}
+        {/* Hero Section */}
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs font-medium text-cyan-400 uppercase tracking-wider">
             <Terminal className="w-3.5 h-3.5" />
-            <span>Stato Repository Corrente</span>
+            <span>Metadati Git Compilati</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white text-balance">
-            Informazioni Git del Progetto
+            Stato Git alla Compilazione
           </h1>
           <p className="text-sm text-slate-400 max-w-2xl leading-relaxed">
-            Monitoraggio dei metadati Git per la directory di lavoro corrente: ultimo tag, branch attivo, verifica stato dirty e hash crittografico dell&apos;ultimo commit.
+            Report statico delle proprietà del repository congelate al momento della build dell&apos;applicazione Next.js.
           </p>
         </div>
 
-        {/* Skeleton di caricamento */}
-        {loading && !data && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[1, 2, 3, 4].map((i) => (
-              <div
-                key={i}
-                className="h-44 rounded-xl bg-slate-900/60 border border-slate-800 animate-pulse p-5 space-y-4"
-              >
-                <div className="w-20 h-4 bg-slate-800 rounded" />
-                <div className="w-32 h-8 bg-slate-800 rounded" />
-                <div className="w-full h-4 bg-slate-800/60 rounded" />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Stato non-repository Git */}
-        {data && !data.isGitRepo && (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-950/20 p-6 text-amber-200 space-y-4">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <h3 className="font-semibold text-white">Repository Git non rilevato</h3>
-                <p className="text-sm text-slate-300">
-                  {data.error || 'Nessun repository Git attivo nella cartella di lavoro corrente.'}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => handleAction('init-repo')}
-              disabled={actionLoading === 'init-repo'}
-              className="px-4 py-2 text-xs font-medium bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors flex items-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              {actionLoading === 'init-repo' ? 'Inizializzazione...' : 'Inizializza Git Repository ora'}
-            </button>
-          </div>
-        )}
-
         {/* 4 CARD RICHIESTE: Ultimo Tag, Branch, Dirty, Hash Commit */}
-        {data && data.isGitRepo && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* 1. ULTIMO TAG */}
-            <div className="group relative rounded-xl border border-slate-800 bg-slate-900/70 p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-3">
-                  <span className="text-xs font-medium text-slate-400">Ultimo Tag</span>
-                  <div className="p-1.5 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                    <Tag className="w-4 h-4" />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl font-bold tracking-tight text-white font-mono break-all">
-                      {data.latestTag || 'Nessun tag'}
-                    </span>
-                    {data.latestTag && (
-                      <button
-                        onClick={() => handleCopy(data.latestTag, 'tag')}
-                        className="p-1 text-slate-500 hover:text-slate-300 transition-colors rounded"
-                        title="Copia tag"
-                      >
-                        {copiedKey === 'tag' ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-400">
-                    {data.latestTag
-                      ? `Versione di rilascio corrente`
-                      : 'Nessun tag annotato o leggero'}
-                  </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* 1. ULTIMO TAG */}
+          <div className="group relative rounded-xl border border-slate-800 bg-slate-900/70 p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span className="text-xs font-medium text-slate-400">Ultimo Tag</span>
+                <div className="p-1.5 rounded-md bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                  <Tag className="w-4 h-4" />
                 </div>
               </div>
 
-              <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500">
-                <span>{data.stats.totalTags} tag registrati</span>
-                <button
-                  onClick={() => setShowTagForm(!showTagForm)}
-                  className="text-cyan-400 hover:text-cyan-300 transition-colors font-medium flex items-center gap-1"
-                >
-                  <Plus className="w-3 h-3" />
-                  Crea tag
-                </button>
-              </div>
-            </div>
-
-            {/* 2. BRANCH */}
-            <div className="group relative rounded-xl border border-slate-800 bg-slate-900/70 p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-3">
-                  <span className="text-xs font-medium text-slate-400">Branch</span>
-                  <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                    <GitBranch className="w-4 h-4" />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl font-bold tracking-tight text-white font-mono truncate">
-                      {data.currentBranch}
-                    </span>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl font-bold tracking-tight text-white font-mono break-all">
+                    {data.latestTag || 'Nessun tag'}
+                  </span>
+                  {data.latestTag && (
                     <button
-                      onClick={() => handleCopy(data.currentBranch, 'branch')}
+                      onClick={() => handleCopy(data.latestTag, 'tag')}
                       className="p-1 text-slate-500 hover:text-slate-300 transition-colors rounded"
-                      title="Copia nome branch"
+                      title="Copia tag"
                     >
-                      {copiedKey === 'branch' ? (
+                      {copiedKey === 'tag' ? (
                         <Check className="w-3.5 h-3.5 text-emerald-400" />
                       ) : (
                         <Copy className="w-3.5 h-3.5" />
                       )}
                     </button>
-                  </div>
-                  <p className="text-xs text-slate-400">
-                    Ramo di sviluppo attivo nel working tree
-                  </p>
+                  )}
                 </div>
-              </div>
-
-              <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500">
-                <span>{data.stats.totalBranches} branch locali</span>
-                <button
-                  onClick={() => setShowBranchForm(!showBranchForm)}
-                  className="text-cyan-400 hover:text-cyan-300 transition-colors font-medium flex items-center gap-1"
-                >
-                  <GitPullRequest className="w-3 h-3" />
-                  Cambia
-                </button>
+                <p className="text-xs text-slate-400">
+                  {data.latestTag
+                    ? `Tag di rilascio presente alla build`
+                    : 'Nessun tag presente alla build'}
+                </p>
               </div>
             </div>
 
-            {/* 3. DIRTY SE IL REPO È DIRTY */}
-            <div
-              className={`group relative rounded-xl border p-5 transition-all flex flex-col justify-between ${
-                data.isDirty
-                  ? 'border-amber-500/40 bg-amber-950/20'
-                  : 'border-slate-800 bg-slate-900/70 hover:border-slate-700'
-              }`}
-            >
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-3">
-                  <span className="text-xs font-medium text-slate-400">Stato Repository</span>
-                  <div
-                    className={`p-1.5 rounded-md border ${
-                      data.isDirty
-                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                        : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                    }`}
-                  >
-                    {data.isDirty ? (
-                      <AlertCircle className="w-4 h-4" />
-                    ) : (
-                      <CheckCircle2 className="w-4 h-4" />
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`text-2xl font-bold tracking-tight font-mono ${
-                        data.isDirty ? 'text-amber-400' : 'text-emerald-400'
-                      }`}
-                    >
-                      {data.isDirty ? 'DIRTY' : 'CLEAN'}
-                    </span>
-                    {data.isDirty && (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-medium">
-                        {data.dirtyFilesCount} {data.dirtyFilesCount === 1 ? 'file' : 'file'}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-400">
-                    {data.isDirty
-                      ? 'Presenti modifiche non salvate in commit'
-                      : 'Working tree pulito, nessuna modifica'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between text-xs">
-                {data.isDirty ? (
-                  <button
-                    onClick={() => handleAction('clean-dirty')}
-                    disabled={actionLoading === 'clean-dirty'}
-                    className="text-amber-400 hover:text-amber-300 transition-colors font-medium flex items-center gap-1"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                    Pulisci repo
-                  </button>
-                ) : (
-                  <span className="text-slate-500">Integrità verificata</span>
-                )}
-
-                <button
-                  onClick={() => handleAction('toggle-dirty')}
-                  disabled={actionLoading === 'toggle-dirty'}
-                  className="text-cyan-400 hover:text-cyan-300 transition-colors font-medium"
-                >
-                  {data.isDirty ? 'Rimuovi test' : 'Simula dirty'}
-                </button>
-              </div>
-            </div>
-
-            {/* 4. HASH DELL'ULTIMA COMMIT */}
-            <div className="group relative rounded-xl border border-slate-800 bg-slate-900/70 p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between gap-2 mb-3">
-                  <span className="text-xs font-medium text-slate-400">Hash Ultima Commit</span>
-                  <div className="p-1.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    <GitCommit className="w-4 h-4" />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl font-bold tracking-tight text-white font-mono">
-                      {data.latestCommit ? data.latestCommit.shortHash : 'Nessuna'}
-                    </span>
-                    {data.latestCommit && (
-                      <button
-                        onClick={() => handleCopy(data.latestCommit.hash, 'commit-hash')}
-                        className="p-1 text-slate-500 hover:text-slate-300 transition-colors rounded"
-                        title="Copia hash completo a 40 caratteri"
-                      >
-                        {copiedKey === 'commit-hash' ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-xs text-slate-400 truncate max-w-[200px]" title={data.latestCommit?.subject}>
-                    {data.latestCommit?.subject || 'Nessun commit presente'}
-                  </p>
-                </div>
-              </div>
-
-              <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500">
-                <span className="truncate max-w-[130px]" title={data.latestCommit?.author}>
-                  {data.latestCommit?.author || 'Git'}
-                </span>
-                <span className="font-mono tabular-nums">{data.stats.totalCommits} commit</span>
-              </div>
+            <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500">
+              <span>{data.stats?.totalTags ?? 0} tag rilevati</span>
+              <span className="text-purple-400 font-mono text-[11px]">describe --tags</span>
             </div>
           </div>
-        )}
 
-        {/* MODULI DI CREAZIONE AZIONI (Tag, Branch, Commit) */}
-        <AnimatePresence>
-          {showTagForm && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="p-4 rounded-xl border border-purple-500/30 bg-purple-950/20 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-purple-200 flex items-center gap-2">
-                    <Tag className="w-4 h-4 text-purple-400" />
-                    Crea un nuovo Git Tag
-                  </h3>
-                  <button
-                    onClick={() => setShowTagForm(false)}
-                    className="text-xs text-slate-400 hover:text-slate-200"
-                  >
-                    Annulla
-                  </button>
-                </div>
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder="Es. v1.1.0 o release-2026"
-                    value={newTagName}
-                    onChange={(e) => setNewTagName(e.target.value)}
-                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500 font-mono"
-                  />
-                  <button
-                    onClick={() => handleAction('create-tag', { name: newTagName })}
-                    disabled={!newTagName.trim() || actionLoading === 'create-tag'}
-                    className="px-4 py-2 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-500 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {actionLoading === 'create-tag' ? 'Creazione in corso...' : 'Conferma e Applica Tag'}
-                  </button>
+          {/* 2. BRANCH */}
+          <div className="group relative rounded-xl border border-slate-800 bg-slate-900/70 p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span className="text-xs font-medium text-slate-400">Branch</span>
+                <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <GitBranch className="w-4 h-4" />
                 </div>
               </div>
-            </motion.div>
-          )}
 
-          {showBranchForm && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="p-4 rounded-xl border border-blue-500/30 bg-blue-950/20 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-blue-200 flex items-center gap-2">
-                    <GitBranch className="w-4 h-4 text-blue-400" />
-                    Cambia o Crea Branch
-                  </h3>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl font-bold tracking-tight text-white font-mono truncate">
+                    {data.currentBranch}
+                  </span>
                   <button
-                    onClick={() => setShowBranchForm(false)}
-                    className="text-xs text-slate-400 hover:text-slate-200"
+                    onClick={() => handleCopy(data.currentBranch, 'branch')}
+                    className="p-1 text-slate-500 hover:text-slate-300 transition-colors rounded"
+                    title="Copia branch"
                   >
-                    Annulla
+                    {copiedKey === 'branch' ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
                   </button>
                 </div>
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder="Nome branch (es. feature/login o staging)"
-                    value={newBranchName}
-                    onChange={(e) => setNewBranchName(e.target.value)}
-                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
-                  />
-                  <button
-                    onClick={() => handleAction('switch-branch', { name: newBranchName })}
-                    disabled={!newBranchName.trim() || actionLoading === 'switch-branch'}
-                    className="px-4 py-2 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {actionLoading === 'switch-branch' ? 'Passaggio...' : 'Checkout / Crea Branch'}
-                  </button>
-                </div>
-                {data && data.stats.allBranches.length > 0 && (
-                  <div className="pt-2 flex items-center gap-2 text-xs text-slate-400 flex-wrap">
-                    <span>Branch disponibili:</span>
-                    {data.stats.allBranches.map((b) => (
-                      <button
-                        key={b}
-                        onClick={() => handleAction('switch-branch', { name: b })}
-                        className={`px-2 py-0.5 rounded border text-xs font-mono transition-colors ${
-                          b === data.currentBranch
-                            ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
-                            : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
-                        }`}
-                      >
-                        {b}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <p className="text-xs text-slate-400">
+                  Ramo attivo durante la compilazione
+                </p>
               </div>
-            </motion.div>
-          )}
-
-          {showCommitForm && (
-            <motion.div
-              initial={{ opacity: 0, height: 0 }}
-              animate={{ opacity: 1, height: 'auto' }}
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-950/20 space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-emerald-200 flex items-center gap-2">
-                    <GitCommit className="w-4 h-4 text-emerald-400" />
-                    Crea un Nuovo Commit
-                  </h3>
-                  <button
-                    onClick={() => setShowCommitForm(false)}
-                    className="text-xs text-slate-400 hover:text-slate-200"
-                  >
-                    Annulla
-                  </button>
-                </div>
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                  <input
-                    type="text"
-                    placeholder="Messaggio commit (es. chore: aggiornamento build)"
-                    value={commitMessage}
-                    onChange={(e) => setCommitMessage(e.target.value)}
-                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
-                  />
-                  <button
-                    onClick={() =>
-                      handleAction('create-commit', { message: commitMessage || 'feat: test commit' })
-                    }
-                    disabled={actionLoading === 'create-commit'}
-                    className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {actionLoading === 'create-commit' ? 'Creazione...' : 'Conferma Commit'}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* DETTAGLIO WORKING TREE & FILE MODIFICATI */}
-        <section className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900/80">
-            <div className="flex items-center gap-3">
-              <div className="w-2.5 h-2.5 rounded-full bg-cyan-400" />
-              <h2 className="text-sm font-semibold text-white">
-                Dettaglio Working Tree & File Modificati
-              </h2>
-              <span className="text-xs text-slate-500">
-                ({data?.isDirty ? `${data.dirtyFilesCount} modifiche rilevate` : 'Nessuna modifica'})
-              </span>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleAction('toggle-dirty')}
-                disabled={actionLoading === 'toggle-dirty'}
-                className="px-3 py-1.5 text-xs font-medium text-slate-300 bg-slate-800/80 hover:bg-slate-700 hover:text-white border border-slate-700 rounded-lg transition-colors"
-              >
-                {data?.isDirty ? 'Rimuovi test file' : 'Genera modifica di test'}
-              </button>
-              {data?.isDirty && (
-                <button
-                  onClick={() => handleAction('clean-dirty')}
-                  disabled={actionLoading === 'clean-dirty'}
-                  className="px-3 py-1.5 text-xs font-medium text-rose-300 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 rounded-lg transition-colors flex items-center gap-1.5"
+            <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500">
+              <span>{data.stats?.totalBranches ?? 0} branch nel repo</span>
+              <span className="text-blue-400 font-mono text-[11px]">branch --show-current</span>
+            </div>
+          </div>
+
+          {/* 3. DIRTY SE IL REPO È DIRTY */}
+          <div
+            className={`group relative rounded-xl border p-5 transition-all flex flex-col justify-between ${
+              data.isDirty
+                ? 'border-amber-500/40 bg-amber-950/20'
+                : 'border-slate-800 bg-slate-900/70 hover:border-slate-700'
+            }`}
+          >
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span className="text-xs font-medium text-slate-400">Stato Repository</span>
+                <div
+                  className={`p-1.5 rounded-md border ${
+                    data.isDirty
+                      ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                      : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  }`}
                 >
-                  <Trash2 className="w-3 h-3" />
-                  Scarta modifiche
-                </button>
-              )}
+                  {data.isDirty ? (
+                    <AlertCircle className="w-4 h-4" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4" />
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-2xl font-bold tracking-tight font-mono ${
+                      data.isDirty ? 'text-amber-400' : 'text-emerald-400'
+                    }`}
+                  >
+                    {data.isDirty ? 'DIRTY' : 'CLEAN'}
+                  </span>
+                  {data.isDirty && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-medium">
+                      {data.dirtyFilesCount} {data.dirtyFilesCount === 1 ? 'file' : 'file'}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400">
+                  {data.isDirty
+                    ? 'Working tree con modifiche non committate alla build'
+                    : 'Working tree pulito alla build'}
+                </p>
+              </div>
             </div>
+
+            <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500">
+              <span className={data.isDirty ? 'text-amber-400 font-medium' : 'text-emerald-400 font-medium'}>
+                {data.isDirty ? 'Modifiche presenti' : 'Clean build'}
+              </span>
+              <span className="text-amber-400 font-mono text-[11px]">status --porcelain</span>
+            </div>
+          </div>
+
+          {/* 4. HASH DELL'ULTIMA COMMIT */}
+          <div className="group relative rounded-xl border border-slate-800 bg-slate-900/70 p-5 hover:border-slate-700 transition-all flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span className="text-xs font-medium text-slate-400">Hash Ultima Commit</span>
+                <div className="p-1.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <GitCommit className="w-4 h-4" />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl font-bold tracking-tight text-white font-mono">
+                    {data.latestCommit ? data.latestCommit.shortHash : 'Nessuna'}
+                  </span>
+                  {data.latestCommit && (
+                    <button
+                      onClick={() => handleCopy(data.latestCommit.hash, 'commit-hash')}
+                      className="p-1 text-slate-500 hover:text-slate-300 transition-colors rounded"
+                      title="Copia hash completo a 40 caratteri"
+                    >
+                      {copiedKey === 'commit-hash' ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-slate-400 truncate max-w-[200px]" title={data.latestCommit?.subject}>
+                  {data.latestCommit?.subject || 'Nessun commit presente'}
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-4 mt-4 border-t border-slate-800/80 flex items-center justify-between text-xs text-slate-500">
+              <span className="truncate max-w-[130px]" title={data.latestCommit?.author}>
+                {data.latestCommit?.author || 'Git'}
+              </span>
+              <span className="text-emerald-400 font-mono text-[11px]">rev-parse HEAD</span>
+            </div>
+          </div>
+        </div>
+
+        {/* DETTAGLIO MODIFICHE DIRTY / WORKING TREE */}
+        <section className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden">
+          <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-2.5 h-2.5 rounded-full ${
+                  data.isDirty ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400'
+                }`}
+              />
+              <h2 className="text-sm font-semibold text-white">
+                Verifica Stato Dirty al Momento della Compilazione
+              </h2>
+            </div>
+            <span className="text-xs font-mono text-slate-400">
+              {data.isDirty ? `${data.dirtyFilesCount} file modificati/non tracciati` : 'Stato pulito'}
+            </span>
           </div>
 
           <div className="p-5">
-            {data?.isDirty ? (
-              <div className="space-y-2">
+            {data.isDirty && data.dirtyFiles && data.dirtyFiles.length > 0 ? (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-400">
+                  I seguenti file non erano committati al momento della creazione del bundle:
+                </p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
@@ -749,10 +504,10 @@ export default function GitDashboard() {
                   <CheckCircle2 className="w-5 h-5" />
                 </div>
                 <p className="text-sm font-medium text-slate-200">
-                  L&apos;albero di lavoro è completamente pulito (Clean)
+                  Nessun file dirty al momento della build
                 </p>
                 <p className="text-xs text-slate-500 max-w-md">
-                  Non ci sono file modificati, eliminati o non tracciati. Puoi cliccare su &quot;Genera modifica di test&quot; per verificare in tempo reale il cambio di stato in DIRTY.
+                  L&apos;albero di lavoro era integro e allineato con l&apos;ultimo commit al momento della compilazione.
                 </p>
               </div>
             )}
@@ -768,16 +523,10 @@ export default function GitDashboard() {
                 <GitCommit className="w-4 h-4 text-emerald-400" />
                 Dettaglio Ultimo Commit
               </h3>
-              <button
-                onClick={() => setShowCommitForm(!showCommitForm)}
-                className="text-xs text-cyan-400 hover:text-cyan-300 font-medium flex items-center gap-1"
-              >
-                <Plus className="w-3 h-3" />
-                Nuovo
-              </button>
+              <span className="text-[11px] font-mono text-cyan-400">HEAD</span>
             </div>
 
-            {data?.latestCommit ? (
+            {data.latestCommit ? (
               <div className="space-y-3.5 text-xs">
                 <div>
                   <span className="text-slate-500 block mb-1">Messaggio Commit</span>
@@ -815,11 +564,10 @@ export default function GitDashboard() {
                   <div className="flex items-center justify-between text-slate-400">
                     <span className="flex items-center gap-1.5">
                       <Clock className="w-3.5 h-3.5 text-slate-500" />
-                      Data
+                      Data Commit
                     </span>
-                    <span className="text-slate-200 font-mono tabular-nums">
-                      {data.latestCommit.relativeDate ||
-                        new Date(data.latestCommit.date).toLocaleString('it-IT')}
+                    <span suppressHydrationWarning className="text-slate-200 font-mono tabular-nums">
+                      {data.latestCommit.relativeDate || formatTimestamp(data.latestCommit.date)}
                     </span>
                   </div>
                 </div>
@@ -834,14 +582,14 @@ export default function GitDashboard() {
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <h3 className="text-sm font-semibold text-white flex items-center gap-2">
                 <Clock className="w-4 h-4 text-cyan-400" />
-                Cronologia Recente Commit
+                Cronologia Recente Commit al Build Time
               </h3>
               <span className="text-xs text-slate-500">
-                Totale {data?.stats.totalCommits || 0} commit
+                Totale {data.stats?.totalCommits ?? 0} commit
               </span>
             </div>
 
-            {data?.recentCommits && data.recentCommits.length > 0 ? (
+            {data.recentCommits && data.recentCommits.length > 0 ? (
               <div className="space-y-3">
                 {data.recentCommits.map((c, index) => (
                   <div
@@ -866,7 +614,9 @@ export default function GitDashboard() {
                         <div className="flex items-center gap-2 text-slate-500 text-[11px]">
                           <span>{c.author}</span>
                           <span aria-hidden="true">·</span>
-                          <span className="font-mono tabular-nums">{c.relativeDate}</span>
+                          <span suppressHydrationWarning className="font-mono tabular-nums">
+                            {c.relativeDate || formatTimestamp(c.date)}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -898,46 +648,46 @@ export default function GitDashboard() {
           </div>
         </section>
 
-        {/* GUIDA AI COMANDI GIT ESEGUITI */}
+        {/* GUIDA AI COMANDI ESEGUITI DURANTE LA BUILD */}
         <section className="rounded-xl border border-slate-800/80 bg-slate-900/30 p-5 space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-800">
             <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-              <Terminal className="w-4 h-4 text-slate-400" />
-              Comandi Git Equivalenti Eseguiti dal Sistema
+              <Layers className="w-4 h-4 text-slate-400" />
+              Comandi Git Eseguiti a Build Time
             </h3>
-            <span className="text-xs text-slate-500 font-mono">CLI Shell Native</span>
+            <span className="text-xs text-slate-500 font-mono">Build-Time Hooks</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-xs font-mono">
             <div className="p-3 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1">
-              <span className="text-slate-500 text-[11px] block font-sans">Ultimo Tag</span>
+              <span className="text-slate-500 text-[11px] block font-sans">1. Ultimo Tag</span>
               <p className="text-cyan-300">git describe --tags --abbrev=0</p>
               <p className="text-slate-400 text-[11px] font-sans truncate">
-                Risultato: {data?.latestTag || 'Nessun tag'}
+                Valore: {data.latestTag || 'Nessun tag'}
               </p>
             </div>
 
             <div className="p-3 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1">
-              <span className="text-slate-500 text-[11px] block font-sans">Branch Corrente</span>
+              <span className="text-slate-500 text-[11px] block font-sans">2. Branch</span>
               <p className="text-cyan-300">git branch --show-current</p>
               <p className="text-slate-400 text-[11px] font-sans truncate">
-                Risultato: {data?.currentBranch || 'N/A'}
+                Valore: {data.currentBranch}
               </p>
             </div>
 
             <div className="p-3 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1">
-              <span className="text-slate-500 text-[11px] block font-sans">Verifica Dirty</span>
+              <span className="text-slate-500 text-[11px] block font-sans">3. Stato Dirty</span>
               <p className="text-cyan-300">git status --porcelain</p>
               <p className="text-slate-400 text-[11px] font-sans truncate">
-                Risultato: {data?.isDirty ? 'Dirty (modifiche presenti)' : 'Clean'}
+                Valore: {data.isDirty ? `DIRTY (${data.dirtyFilesCount} file)` : 'CLEAN'}
               </p>
             </div>
 
             <div className="p-3 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1">
-              <span className="text-slate-500 text-[11px] block font-sans">Hash Ultima Commit</span>
+              <span className="text-slate-500 text-[11px] block font-sans">4. Hash Ultima Commit</span>
               <p className="text-cyan-300">git rev-parse HEAD</p>
               <p className="text-slate-400 text-[11px] font-sans truncate">
-                Risultato: {data?.latestCommit?.shortHash || 'N/A'}
+                Valore: {data.latestCommit ? data.latestCommit.shortHash : 'N/A'}
               </p>
             </div>
           </div>
@@ -948,12 +698,12 @@ export default function GitDashboard() {
       <footer className="w-full border-t border-slate-800/80 py-6 px-4 sm:px-8 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>
-            Git Status Dashboard · Analisi metadati in tempo reale per repository locale
+            Git Status Dashboard · Informazioni compilate a build-time (Zero dipendenze runtime)
           </p>
           <div className="flex items-center gap-4">
             <span className="text-slate-600">|</span>
-            <span className="font-mono tabular-nums text-slate-400">
-              Ultimo controllo: {data?.lastChecked ? new Date(data.lastChecked).toLocaleTimeString('it-IT') : '--:--'}
+            <span suppressHydrationWarning className="font-mono tabular-nums text-slate-400">
+              Build: {formattedBuildTime}
             </span>
           </div>
         </div>

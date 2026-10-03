@@ -1,3 +1,8 @@
+import { generateGitInfo } from './scripts/generate-git-info.mjs';
+
+// Esegue il recupero delle informazioni Git a build-time
+generateGitInfo();
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
